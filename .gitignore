@@ -1,0 +1,7 @@
+python/
+data/
+*.dll
+*.exe
+token.json
+graphify-out/
+__pycache__/
