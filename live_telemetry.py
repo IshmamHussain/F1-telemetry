@@ -22,7 +22,9 @@ sock.bind((UDP_IP, UDP_PORT))
 
 # Data Sync Variables
 found_rival_id = -1
+p_throttle = 0.0
 p_brake = 0.0
+r_throttle = 0.0
 r_brake = 0.0
 p_tyre_wear = [0.0, 0.0, 0.0, 0.0]  # FL, FR, RL, RR
 
@@ -39,10 +41,11 @@ while True:
         if packet_id == 6:
             p_off = 29 + (player_idx * 60)
             p_speed = struct.unpack_from('<H', data, p_off)[0]
+            p_throttle = struct.unpack_from('<f', data, p_off + 2)[0]
             p_brake = struct.unpack_from('<f', data, p_off + 10)[0]
             
             points.append(influxdb_client.Point("car_telemetry").tag("driver", "Player")
-                .field("speed_kph", p_speed).field("brake", p_brake))
+                .field("speed_kph", p_speed).field("throttle", p_throttle).field("brake", p_brake))
 
             # Auto-Detect Rival
             for i in range(22):
@@ -52,9 +55,10 @@ while True:
                 
                 if r_speed > 10 and r_speed != 115:
                     found_rival_id = i
+                    r_throttle = struct.unpack_from('<f', data, r_off + 2)[0]
                     r_brake = struct.unpack_from('<f', data, r_off + 10)[0]
                     points.append(influxdb_client.Point("car_telemetry").tag("driver", "Rival")
-                        .field("speed_kph", r_speed).field("brake", r_brake))
+                        .field("speed_kph", r_speed).field("throttle", r_throttle).field("brake", r_brake))
                     break 
 
             print(f"LIVE | Player: {p_speed}km/h | Rival: {r_speed if found_rival_id != -1 else 0}km/h | Tyres: FL={p_tyre_wear[0]:.1f}% FR={p_tyre_wear[1]:.1f}% RL={p_tyre_wear[2]:.1f}% RR={p_tyre_wear[3]:.1f}%    ", end='\r')
@@ -78,22 +82,24 @@ while True:
                 .field("rl", float(p_tyre_dmg[2]))
                 .field("rr", float(p_tyre_dmg[3])))
 
-        # PACKET 0: MOTION (Capture GPS + Sync Brake) [DISABLED]
-        # elif packet_id == 0:
-        #     # Player Map Data
-        #     p_m_off = 29 + (player_idx * 60)
-        #     points.append(influxdb_client.Point("track_map").tag("driver", "Player")
-        #         .field("world_x", struct.unpack_from('<f', data, p_m_off)[0])
-        #         .field("world_z", struct.unpack_from('<f', data, p_m_off + 8)[0])
-        #         .field("brake", p_brake))
-        #
-        #     # Rival Map Data
-        #     if found_rival_id != -1:
-        #         r_m_off = 29 + (found_rival_id * 60)
-        #         points.append(influxdb_client.Point("track_map").tag("driver", "Rival")
-        #             .field("world_x", struct.unpack_from('<f', data, r_m_off)[0])
-        #             .field("world_z", struct.unpack_from('<f', data, r_m_off + 8)[0])
-        #             .field("brake", r_brake))
+        # PACKET 0: MOTION (Capture GPS + Sync Brake) [ENABLED]
+        elif packet_id == 0:
+            # Player Map Data
+            p_m_off = 29 + (player_idx * 60)
+            points.append(influxdb_client.Point("track_map").tag("driver", "Player")
+                .field("world_x", struct.unpack_from('<f', data, p_m_off)[0])
+                .field("world_z", struct.unpack_from('<f', data, p_m_off + 8)[0])
+                .field("throttle", p_throttle)
+                .field("brake", p_brake))
+        
+            # Rival Map Data
+            if found_rival_id != -1:
+                r_m_off = 29 + (found_rival_id * 60)
+                points.append(influxdb_client.Point("track_map").tag("driver", "Rival")
+                    .field("world_x", struct.unpack_from('<f', data, r_m_off)[0])
+                    .field("world_z", struct.unpack_from('<f', data, r_m_off + 8)[0])
+                    .field("throttle", r_throttle)
+                    .field("brake", r_brake))
 
         if points:
             write_api.write(bucket=bucket, org=org, record=points)
