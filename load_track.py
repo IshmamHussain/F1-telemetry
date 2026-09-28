@@ -17,6 +17,7 @@ import sys
 import time
 
 import fastf1
+# pyrefly: ignore [missing-import]
 import numpy as np
 # pyrefly: ignore [missing-import]
 import influxdb_client
