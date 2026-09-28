@@ -5,3 +5,5 @@ data/
 token.json
 graphify-out/
 __pycache__/
+fastf1_cache/
+tracks/

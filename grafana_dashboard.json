@@ -1,0 +1,402 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_INFLUXDB",
+      "label": "InfluxDB",
+      "description": "InfluxDB data source for F1 telemetry",
+      "type": "datasource",
+      "pluginId": "influxdb",
+      "pluginName": "InfluxDB"
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "description": "F1 25 Live Telemetry Dashboard with Track Map, Speed, Braking, and Tyre Data",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "🏎️ LIVE TRACK MAP",
+      "description": "Official track layout with live car positions. Color = braking intensity.",
+      "type": "nline-plotlyjs-panel",
+      "gridPos": { "h": 16, "w": 12, "x": 0, "y": 0 },
+      "datasource": "${DS_INFLUXDB}",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "allData": {},
+        "config": {},
+        "data": [],
+        "layout": {
+          "autosize": true,
+          "paper_bgcolor": "rgba(0,0,0,0)",
+          "plot_bgcolor": "rgba(15,15,25,1)",
+          "font": { "color": "#aaa", "family": "Inter, sans-serif", "size": 11 },
+          "margin": { "l": 30, "r": 30, "t": 40, "b": 30 },
+          "title": {
+            "text": "<b>TRACK MAP</b>",
+            "font": { "size": 14, "color": "#e0e0e0" }
+          },
+          "xaxis": {
+            "showgrid": false,
+            "zeroline": false,
+            "showticklabels": false,
+            "scaleanchor": "y",
+            "scaleratio": 1,
+            "fixedrange": true
+          },
+          "yaxis": {
+            "showgrid": false,
+            "zeroline": false,
+            "showticklabels": false,
+            "fixedrange": true
+          },
+          "showlegend": true,
+          "legend": {
+            "x": 0.01,
+            "y": 0.99,
+            "bgcolor": "rgba(0,0,0,0.5)",
+            "font": { "color": "#ccc", "size": 10 }
+          },
+          "dragmode": false
+        },
+        "script": "// === F1 TRACK MAP VISUALIZATION ===\n// This script processes InfluxDB data to render:\n// 1. Track outline (from track_layout measurement)\n// 2. Player car trail (color-coded by brake intensity)\n// 3. Rival car trail\n// 4. Current car position markers\n\nvar traces = [];\n\n// --- PARSE DATA FROM GRAFANA ---\nvar trackX = [], trackY = [];\nvar playerX = [], playerY = [], playerBrake = [], playerThrottle = [];\nvar rivalX = [], rivalY = [], rivalBrake = [];\n\nif (data.series) {\n  data.series.forEach(function(series) {\n    var name = (series.name || '').toLowerCase();\n    var fields = {};\n    series.fields.forEach(function(f) {\n      fields[f.name] = f.values;\n    });\n\n    if (name.indexOf('track_layout') >= 0 || name.indexOf('layout') >= 0) {\n      trackX = fields['x'] || fields['world_x'] || [];\n      trackY = fields['y'] || fields['world_z'] || [];\n    } else if (name.indexOf('player') >= 0 || name.indexOf('Player') >= 0) {\n      playerX = fields['world_x'] || fields['x'] || [];\n      playerY = fields['world_z'] || fields['y'] || [];\n      playerBrake = fields['brake'] || [];\n      playerThrottle = fields['throttle'] || [];\n    } else if (name.indexOf('rival') >= 0 || name.indexOf('Rival') >= 0) {\n      rivalX = fields['world_x'] || fields['x'] || [];\n      rivalY = fields['world_z'] || fields['y'] || [];\n      rivalBrake = fields['brake'] || [];\n    }\n  });\n}\n\n// --- TRACK OUTLINE ---\nif (trackX.length > 0) {\n  traces.push({\n    x: trackX,\n    y: trackY,\n    type: 'scatter',\n    mode: 'lines',\n    name: 'Track',\n    line: { color: 'rgba(60, 60, 80, 0.8)', width: 12, shape: 'spline' },\n    hoverinfo: 'skip'\n  });\n  // Track edge highlight\n  traces.push({\n    x: trackX,\n    y: trackY,\n    type: 'scatter',\n    mode: 'lines',\n    name: 'Track Edge',\n    showlegend: false,\n    line: { color: 'rgba(100, 100, 140, 0.4)', width: 14, shape: 'spline' },\n    hoverinfo: 'skip'\n  });\n}\n\n// --- PLAYER TRAIL (color by brake/throttle) ---\nif (playerX.length > 0) {\n  var colors = [];\n  for (var i = 0; i < playerX.length; i++) {\n    var b = playerBrake[i] || 0;\n    var t = playerThrottle[i] || 0;\n    if (b > 0.1) {\n      // Red for braking (intensity based)\n      var r = Math.min(255, Math.floor(150 + b * 105));\n      colors.push('rgb(' + r + ',30,30)');\n    } else if (t > 0.9) {\n      colors.push('rgb(0,200,80)');  // Green for full throttle\n    } else {\n      colors.push('rgb(0,150,255)');  // Blue for coasting\n    }\n  }\n\n  traces.push({\n    x: playerX,\n    y: playerY,\n    type: 'scatter',\n    mode: 'markers',\n    name: 'Player Trail',\n    marker: { color: colors, size: 3, opacity: 0.6 },\n    hovertemplate: 'Brake: %{text}<extra>Player</extra>',\n    text: playerBrake.map(function(b) { return (b * 100).toFixed(0) + '%'; })\n  });\n\n  // Current position (large marker)\n  var lastIdx = playerX.length - 1;\n  traces.push({\n    x: [playerX[lastIdx]],\n    y: [playerY[lastIdx]],\n    type: 'scatter',\n    mode: 'markers+text',\n    name: 'Player',\n    marker: { color: '#00e5ff', size: 14, symbol: 'circle',\n              line: { color: '#fff', width: 2 } },\n    text: ['P'],\n    textposition: 'top center',\n    textfont: { color: '#00e5ff', size: 12, family: 'Inter' }\n  });\n}\n\n// --- RIVAL TRAIL ---\nif (rivalX.length > 0) {\n  traces.push({\n    x: rivalX,\n    y: rivalY,\n    type: 'scatter',\n    mode: 'markers',\n    name: 'Rival Trail',\n    marker: { color: 'rgba(255,165,0,0.4)', size: 3 },\n    hoverinfo: 'skip'\n  });\n\n  var rLastIdx = rivalX.length - 1;\n  traces.push({\n    x: [rivalX[rLastIdx]],\n    y: [rivalY[rLastIdx]],\n    type: 'scatter',\n    mode: 'markers+text',\n    name: 'Rival',\n    marker: { color: '#ff6600', size: 14, symbol: 'circle',\n              line: { color: '#fff', width: 2 } },\n    text: ['R'],\n    textposition: 'top center',\n    textfont: { color: '#ff6600', size: 12, family: 'Inter' }\n  });\n}\n\nreturn {\n  data: traces,\n  layout: {\n    autosize: true,\n    paper_bgcolor: 'rgba(0,0,0,0)',\n    plot_bgcolor: 'rgba(15,15,25,1)',\n    font: { color: '#aaa', family: 'Inter, sans-serif', size: 11 },\n    margin: { l: 20, r: 20, t: 10, b: 20 },\n    xaxis: { showgrid: false, zeroline: false, showticklabels: false, scaleanchor: 'y', scaleratio: 1 },\n    yaxis: { showgrid: false, zeroline: false, showticklabels: false },\n    showlegend: true,\n    legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(0,0,0,0.6)', font: { color: '#ccc', size: 10 } },\n    dragmode: false\n  },\n  config: { displayModeBar: false, responsive: true }\n};"
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: 2000-01-01T00:00:00Z, stop: 2000-01-02T00:00:00Z) |> filter(fn: (r) => r._measurement == \"track_layout\") |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> sort(columns: [\"seq\"])",
+          "refId": "TrackLayout",
+          "datasource": "${DS_INFLUXDB}"
+        },
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: -5m) |> filter(fn: (r) => r._measurement == \"track_map\" and r.driver == \"Player\") |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> sort(columns: [\"_time\"])",
+          "refId": "PlayerMap",
+          "datasource": "${DS_INFLUXDB}"
+        },
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: -5m) |> filter(fn: (r) => r._measurement == \"track_map\" and r.driver == \"Rival\") |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> sort(columns: [\"_time\"])",
+          "refId": "RivalMap",
+          "datasource": "${DS_INFLUXDB}"
+        }
+      ]
+    },
+    {
+      "title": "⚡ SPEED COMPARISON",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": "${DS_INFLUXDB}",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "scheme",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          },
+          "unit": "velocitykmh"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Player" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#00e5ff", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Rival" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#ff6600", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"car_telemetry\" and r._field == \"speed_kph\") |> aggregateWindow(every: v.windowPeriod, fn: mean)",
+          "refId": "Speed",
+          "datasource": "${DS_INFLUXDB}"
+        }
+      ]
+    },
+    {
+      "title": "🔴 BRAKE vs THROTTLE",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "${DS_INFLUXDB}",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "spanNulls": false,
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*brake.*Player.*|.*Player.*brake.*" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#ff4444", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": ".*throttle.*Player.*|.*Player.*throttle.*" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#00cc66", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": ".*brake.*Rival.*|.*Rival.*brake.*" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#cc3333", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 5] } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": ".*throttle.*Rival.*|.*Rival.*throttle.*" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#009944", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 5] } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"car_telemetry\" and (r._field == \"brake\" or r._field == \"throttle\")) |> aggregateWindow(every: v.windowPeriod, fn: mean)",
+          "refId": "BrakeThrottle",
+          "datasource": "${DS_INFLUXDB}"
+        }
+      ]
+    },
+    {
+      "title": "🛞 TYRE WEAR",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 16 },
+      "datasource": "${DS_INFLUXDB}",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "#EAB839", "value": 40 },
+              { "color": "orange", "value": 60 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "fl" },
+            "properties": [
+              { "id": "displayName", "value": "Front Left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "fr" },
+            "properties": [
+              { "id": "displayName", "value": "Front Right" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rl" },
+            "properties": [
+              { "id": "displayName", "value": "Rear Left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rr" },
+            "properties": [
+              { "id": "displayName", "value": "Rear Right" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: -1m) |> filter(fn: (r) => r._measurement == \"tyre_wear\" and r.driver == \"Player\") |> last() |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")",
+          "refId": "TyreWear",
+          "datasource": "${DS_INFLUXDB}"
+        }
+      ]
+    },
+    {
+      "title": "🔧 TYRE DAMAGE",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 16 },
+      "datasource": "${DS_INFLUXDB}",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "#EAB839", "value": 30 },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 70 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "fl" },
+            "properties": [{ "id": "displayName", "value": "Front Left" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "fr" },
+            "properties": [{ "id": "displayName", "value": "Front Right" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rl" },
+            "properties": [{ "id": "displayName", "value": "Rear Left" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rr" },
+            "properties": [{ "id": "displayName", "value": "Rear Right" }]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: -1m) |> filter(fn: (r) => r._measurement == \"tyre_damage\" and r.driver == \"Player\") |> last() |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")",
+          "refId": "TyreDamage",
+          "datasource": "${DS_INFLUXDB}"
+        }
+      ]
+    },
+    {
+      "title": "📊 TYRE WEAR OVER TIME",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": "${DS_INFLUXDB}",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "gradientMode": "none",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "fl" },
+            "properties": [
+              { "id": "displayName", "value": "Front Left" },
+              { "id": "color", "value": { "fixedColor": "#00e5ff", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "fr" },
+            "properties": [
+              { "id": "displayName", "value": "Front Right" },
+              { "id": "color", "value": { "fixedColor": "#ff6600", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rl" },
+            "properties": [
+              { "id": "displayName", "value": "Rear Left" },
+              { "id": "color", "value": { "fixedColor": "#aa00ff", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "rr" },
+            "properties": [
+              { "id": "displayName", "value": "Rear Right" },
+              { "id": "color", "value": { "fixedColor": "#ffcc00", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"f1_telemetry\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"tyre_wear\" and r.driver == \"Player\") |> aggregateWindow(every: v.windowPeriod, fn: mean)",
+          "refId": "TyreWearTime",
+          "datasource": "${DS_INFLUXDB}"
+        }
+      ]
+    }
+  ],
+  "refresh": "1s",
+  "schemaVersion": 39,
+  "tags": ["f1", "telemetry", "racing"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["500ms", "1s", "2s", "5s"],
+    "time_options": ["1m", "5m", "15m", "30m", "1h"]
+  },
+  "timezone": "",
+  "title": "F1 25 — Live Telemetry + Track Map",
+  "uid": "f1-telemetry-trackmap",
+  "version": 1
+}
