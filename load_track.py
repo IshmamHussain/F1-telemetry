@@ -16,6 +16,7 @@ import argparse
 import sys
 import time
 
+# pyrefly: ignore [missing-import]
 import fastf1
 # pyrefly: ignore [missing-import]
 import numpy as np
